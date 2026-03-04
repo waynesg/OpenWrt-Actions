@@ -133,19 +133,25 @@ jobs:
           ccache -M 5G || true
           ccache -s || true
 
-      - name: Apply custom config + scripts
+      - name: Apply custom overlay + config + scripts
         run: |
           set -euo pipefail
           cd openwrt
 
-          # Feeds
+          # 1) Overlay files (ssh banner/motd/profile/config etc)
+          if [ -d "$GITHUB_WORKSPACE/targets/$TARGET/files" ]; then
+            mkdir -p files
+            cp -a "$GITHUB_WORKSPACE/targets/$TARGET/files/." files/
+          fi
+
+          # 2) Feeds
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-          # Config
+          # 3) Config
           cp "$GITHUB_WORKSPACE/targets/$TARGET/.config" .config
 
-          # Your scripts
+          # 4) Your scripts
           if [ -f "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" ]; then
             bash "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" || true
           fi
