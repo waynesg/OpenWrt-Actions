@@ -240,27 +240,29 @@ jobs:
       - name: Release
         if: env.ORGANIZERSTATUS == 'success' && env.UPLOAD_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.REPO_TOKEN || secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.FILE_DATE }}
           name: Immortalwrt x86_64 ${{ env.FILE_DATE }}
           files: ${{ env.FIRMWARE }}/*
 
       - name: Notify (Telegram / PushPlus)
-        if: env.ORGANIZERSTATUS == 'success' && (secrets.TELEGRAM_BOT_TOKEN != '' || secrets.PUSH_PLUS_TOKEN != '')
+        if: env.ORGANIZERSTATUS == 'success'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PUSH_PLUS_TOKEN: ${{ secrets.PUSH_PLUS_TOKEN }}
         run: |
           set -euo pipefail
           MSG="✅ ImmortalWrt x86_64 build success\nRepo: $GITHUB_REPOSITORY\nRun: #${{ github.run_number }}\nBranch: $REPO_BRANCH\nTime: $FILE_DATE"
 
-          if [ "${SERVERCHAN_SCKEY}" = "TELE" ] && [ -n "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then
-            curl -fsSL --data chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+          if [ "${SERVERCHAN_SCKEY}" = "TELE" ] && [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_CHAT_ID}" ]; then
+            curl -fsSL --data chat_id="${TELEGRAM_CHAT_ID}" \
               --data "text=$MSG" \
-              "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" || true
+              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" || true
           fi
 
-          if [ "${SERVERCHAN_SCKEY}" = "PUSH" ] && [ -n "${{ secrets.PUSH_PLUS_TOKEN }}" ]; then
-            curl -fsSL --data token="${{ secrets.PUSH_PLUS_TOKEN }}" \
+          if [ "${SERVERCHAN_SCKEY}" = "PUSH" ] && [ -n "${PUSH_PLUS_TOKEN}" ]; then
+            curl -fsSL --data token="${PUSH_PLUS_TOKEN}" \
               --data title="[ImmortalWrt x86_64] build success" \
               --data "content=$MSG" \
               "http://www.pushplus.plus/send" || true
