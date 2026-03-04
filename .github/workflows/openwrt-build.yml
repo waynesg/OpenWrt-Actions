@@ -60,10 +60,16 @@ jobs:
           echo "Disk:"; df -Th
           echo "Kernel:"; uname -a
 
-      - name: Free disk space
-        uses: sbwml/actions@free-disk
-        with:
-          build-mount-path: ${{ env.BUILD_DIR }}
+      - name: Free disk space (safe)
+        run: |
+          set -eux
+          # Best-effort cleanup; do not fail the workflow
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          sudo rm -rf /var/lib/docker || true
+          sudo docker image prune -a -f || true
+          sudo apt-get -y autoremove --purge || true
+          sudo apt-get -y clean || true
+          df -hT || true
 
       - name: Init build environment (local script)
         env:
