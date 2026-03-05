@@ -204,30 +204,47 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'warmup'
         run: echo "Warmup done (dl cached)." && exit 0
 
-      - name: Compile firmware
-        id: compile
+      - name: Preflight: build troublemakers (libffi/docker)
+        id: preflight
         continue-on-error: true
         run: |
           set -euo pipefail
           cd openwrt
-          echo "$(nproc) thread compile"
-          (make -j"$(nproc)" 2>&1 | tee build.log) || (make -j1 V=sc 2>&1 | tee -a build.log)
-          echo "COMPILESTATUS=success" >> $GITHUB_ENV
+          : > build.log
 
-      # Debug helpers: make root-cause visible in logs even when runner is inaccessible
-      - name: Debug libffi (best-effort)
+          echo "===== PRECHECK libffi =====" | tee -a build.log
+          (make -j1 V=sc package/feeds/packages/libffi/compile 2>&1 | tee -a build.log) || true
+
+          echo "===== PRECHECK docker =====" | tee -a build.log
+          (make -j1 V=sc package/feeds/packages/docker/compile 2>&1 | tee -a build.log) || true
+
+      - name: Compile firmware
+        id: compile
+        # Keep going so we can still upload logs/artifacts, but don't hang forever.
+        continue-on-error: true
+        timeout-minutes: 360
+        run: |
+          set -euo pipefail
+          cd openwrt
+          echo "$(nproc) thread compile" | tee -a build.log
+
+          # Run full build; if it fails, rerun with verbose output and append to build.log.
+          if make -j"$(nproc)" 2>&1 | tee -a build.log; then
+            echo "COMPILESTATUS=success" >> $GITHUB_ENV
+          else
+            make -j1 V=sc 2>&1 | tee -a build.log || true
+            echo "COMPILESTATUS=failure" >> $GITHUB_ENV
+          fi
+
+      - name: Debug logs (libffi config.log tail)
         if: always()
         run: |
           set -euxo pipefail
           cd openwrt
-          make -j1 V=sc package/feeds/packages/libffi/compile || true
-
-      - name: Debug docker (best-effort)
-        if: always()
-        run: |
-          set -euxo pipefail
-          cd openwrt
-          make -j1 V=sc package/feeds/packages/docker/compile || true
+          for f in $(find build_dir -maxdepth 6 -type f -name config.log | grep -iE "libffi" || true); do
+            echo "===== $f (tail) =====" | tee -a build.log
+            tail -n 200 "$f" | tee -a build.log || true
+          done
 
       - name: Save cache (ccache)
         if: env.USE_CACHEWRTBUILD == 'true'
