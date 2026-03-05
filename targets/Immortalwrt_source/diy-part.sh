@@ -62,8 +62,18 @@ sed -i 's/<%:Down%>/<%:Move down%>/g' feeds/luci/modules/luci-compat/luasrc/view
 
 echo
 TIME y "更换golang版本"
+# OpenWrt/ImmortalWrt 的 packages feed 有时会出现 golang Build-Depends 指向不存在的 golangX.Y/host。
+# 这里用 sbwml 的 golang feed 替换，并强制重新安装 golang 相关包，避免 package/feeds 下残留旧 Makefile。
 rm -rf feeds/packages/lang/golang
-git clone --depth=1 https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
+git clone --depth=1 https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
+
+# 清理旧的已安装 feed 包，避免继续引用旧的 Makefile
+rm -rf package/feeds/packages/golang
+
+# 重新安装 packages feed 中的 golang（如果脚本执行时 feeds 已经 update/install 过，这一步很关键）
+if [ -x "./scripts/feeds" ]; then
+  ./scripts/feeds install -f -p packages golang
+fi
 
 echo
 TIME y "修改dashboard password"
