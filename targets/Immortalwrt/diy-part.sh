@@ -64,9 +64,25 @@ TIME y "修改最大连接数修改为65535"
 sed -i '/customized in this file/a net.netfilter.nf_conntrack_max=65535' package/base-files/files/etc/sysctl.conf
 
 echo
-TIME y "更换golang版本"
+TIME y "Go toolchain (feeds/packages/lang/golang) 兼容性修复：为 docker 升级 golang"
+
+echo "[before] feeds/packages/lang/golang/Makefile (head):"
+sed -n '1,60p' feeds/packages/lang/golang/Makefile 2>/dev/null || true
+
+# 用上游 ImmortalWrt packages 的 golang 目录替换当前 feeds 里的 golang（最小改动面：只动 golang）
+# 说明：docker/containerd 等包对 Go 版本要求变化很快，这里优先跟随 ImmortalWrt packages 最新版本。
+TMPDIR="$(mktemp -d)"
+(
+  cd "$TMPDIR"
+  git clone --depth=1 --filter=blob:none --sparse https://github.com/immortalwrt/packages .
+  git sparse-checkout set lang/golang
+)
 rm -rf feeds/packages/lang/golang
-git clone https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
+cp -a "$TMPDIR/lang/golang" feeds/packages/lang/
+rm -rf "$TMPDIR"
+
+echo "[after] feeds/packages/lang/golang/Makefile (head):"
+sed -n '1,80p' feeds/packages/lang/golang/Makefile 2>/dev/null || true
 
 # echo
 # TIME y "rpcd - fix timeout"
