@@ -114,7 +114,10 @@ jobs:
           git clone -b "$REPO_BRANCH" --single-branch --filter=blob:none "$REPO_URL" "$OPENWRT_DIR"
           ln -sf "${BUILD_DIR}/${OPENWRT_DIR}" "$GITHUB_WORKSPACE/openwrt"
 
-      - name: Restore cache (dl)
+      # NOTE: 临时关闭缓存（方案 A：排查缓存/残留导致的编译问题）
+      # 验证无误后可恢复这些步骤。
+      - name: Restore cache (dl) [DISABLED]
+        if: ${{ false }}
         uses: actions/cache/restore@v4
         with:
           path: openwrt/dl
@@ -123,7 +126,8 @@ jobs:
             ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-
             ${{ runner.os }}-openwrt-dl-
 
-      - name: Restore cache (ccache)
+      - name: Restore cache (ccache) [DISABLED]
+        if: ${{ false }}
         uses: actions/cache/restore@v4
         with:
           path: openwrt/.ccache
@@ -185,8 +189,8 @@ jobs:
           find dl -size -1024c -exec ls -l {} \; || true
           find dl -size -1024c -exec rm -f {} \; || true
 
-      - name: Save cache (dl)
-        if: always()
+      - name: Save cache (dl) [DISABLED]
+        if: ${{ false }}
         uses: actions/cache/save@v4
         with:
           path: openwrt/dl
@@ -206,8 +210,8 @@ jobs:
           (make -j"$(nproc)" 2>&1 | tee build.log) || (make -j1 V=sc 2>&1 | tee -a build.log)
           echo "COMPILESTATUS=success" >> $GITHUB_ENV
 
-      - name: Save cache (ccache)
-        if: always()
+      - name: Save cache (ccache) [DISABLED]
+        if: ${{ false }}
         uses: actions/cache/save@v4
         with:
           path: openwrt/.ccache
