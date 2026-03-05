@@ -8,11 +8,13 @@ on:
         required: true
         default: 'build'
         type: choice
-        options:
-          - build
-          - warmup
+        options: [build, warmup]
       repo_branch:
-        description: 'Override ImmortalWrt branch (empty = use targets/Immortalwrt/settings.ini)'
+        description: 'Override source branch (empty = use targets/Immortalwrt/settings.ini)'
+        required: false
+        default: ''
+      repo_commit:
+        description: 'Optional: pin source to a specific commit (short/long SHA). Empty = do not pin.'
         required: false
         default: ''
       upload_release:
@@ -26,7 +28,7 @@ on:
       - 'scripts/**'
       - '.github/workflows/**'
   schedule:
-    # 每周五 08:00 UTC (北京时间 16:00)
+    # Every Friday 08:00 UTC (Beijing 16:00)
     - cron: '0 8 * * 5'
 
 env:
@@ -34,6 +36,7 @@ env:
   BUILD_DIR: /builder
   OPENWRT_DIR: openwrt
   TARGET: Immortalwrt
+  CACHE_VER: v3
 
 jobs:
   build:
@@ -45,25 +48,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup variables
-        id: vars
         run: |
           set -euo pipefail
           sudo timedatectl set-timezone "$TZ"
-          echo "RUN_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
-          echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
           echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
-      - name: Show system
-        run: |
-          echo "CPU:"; grep 'model name' /proc/cpuinfo | head -1
-          echo "Memory:"; free -h
-          echo "Disk:"; df -Th
-          echo "Kernel:"; uname -a
 
       - name: Free disk space (safe)
         run: |
           set -eux
-          # Best-effort cleanup; do not fail the workflow
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
           sudo rm -rf /var/lib/docker || true
           sudo docker image prune -a -f || true
@@ -71,16 +63,16 @@ jobs:
           sudo apt-get -y clean || true
           df -hT || true
 
-      - name: Init build environment (local script)
+      - name: Init build environment
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          bash scripts/common/Custom/ubuntu.sh
+          set -euo pipefail
+          bash scripts/ubuntu.sh
           sudo mkdir -p "${BUILD_DIR}"
           sudo chown "$USER:$(id -gn)" "${BUILD_DIR}"
 
-      - name: Load target settings (Immortalwrt)
-        id: settings
+      - name: Load target settings
         run: |
           set -euo pipefail
           # shellcheck disable=SC1090
@@ -89,6 +81,11 @@ jobs:
           INPUT_BRANCH="${{ github.event.inputs.repo_branch }}"
           if [ -n "${INPUT_BRANCH:-}" ]; then
             REPO_BRANCH="$INPUT_BRANCH"
+          fi
+
+          INPUT_COMMIT="${{ github.event.inputs.repo_commit }}"
+          if [ -n "${INPUT_COMMIT:-}" ]; then
+            echo "REPO_COMMIT=$INPUT_COMMIT" >> $GITHUB_ENV
           fi
 
           INPUT_UPLOAD_RELEASE="${{ github.event.inputs.upload_release }}"
@@ -104,63 +101,73 @@ jobs:
           echo "UPLOAD_BIN_DIR=$UPLOAD_BIN_DIR" >> $GITHUB_ENV
           echo "SERVERCHAN_SCKEY=$SERVERCHAN_SCKEY" >> $GITHUB_ENV
           echo "USE_CACHEWRTBUILD=$USE_CACHEWRTBUILD" >> $GITHUB_ENV
-          echo "REGULAR_UPDATE=$REGULAR_UPDATE" >> $GITHUB_ENV
-          echo "BY_INFORMATION=$BY_INFORMATION" >> $GITHUB_ENV
 
       - name: Clone source code
         working-directory: ${{ env.BUILD_DIR }}
         run: |
           set -euo pipefail
           git clone -b "$REPO_BRANCH" --single-branch --filter=blob:none "$REPO_URL" "$OPENWRT_DIR"
+          cd "$OPENWRT_DIR"
+
+          if [ -n "${REPO_COMMIT:-}" ]; then
+            # Ensure the commit exists in this partial clone
+            git fetch --depth=1 origin "$REPO_COMMIT"
+            git checkout "$REPO_COMMIT"
+          fi
+
+          echo "OPENWRT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "Using source: $(git log -1 --oneline)"
+
           ln -sf "${BUILD_DIR}/${OPENWRT_DIR}" "$GITHUB_WORKSPACE/openwrt"
 
-      # NOTE: 临时关闭缓存（方案 A：排查缓存/残留导致的编译问题）
-      # 验证无误后可恢复这些步骤。
-      - name: Restore cache (dl) [DISABLED]
-        if: ${{ false }}
+      - name: Restore cache (dl)
+        if: env.USE_CACHEWRTBUILD == 'true'
         uses: actions/cache/restore@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
+          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/build.yml', 'scripts/**') }}
           restore-keys: |
-            ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-
+            ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-
+            ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ env.CACHE_VER }}-
             ${{ runner.os }}-openwrt-dl-
 
-      - name: Restore cache (ccache) [DISABLED]
-        if: ${{ false }}
+      - name: Restore cache (ccache)
+        if: env.USE_CACHEWRTBUILD == 'true'
         uses: actions/cache/restore@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
+          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/build.yml', 'scripts/**') }}
           restore-keys: |
-            ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-
+            ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-
+            ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ env.CACHE_VER }}-
             ${{ runner.os }}-openwrt-ccache-
 
       - name: Setup ccache
+        if: env.USE_CACHEWRTBUILD == 'true'
         run: |
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/openwrt/.ccache" >> $GITHUB_ENV
           echo "CCACHE_MAXSIZE=5G" >> $GITHUB_ENV
           ccache -M 5G || true
           ccache -s || true
 
-      - name: Apply custom overlay + config + scripts
+      - name: Apply overlay + feeds + config + DIY
         run: |
           set -euo pipefail
           cd openwrt
 
-          # 1) Overlay files (ssh banner/motd/profile/config etc)
+          # Overlay files
           if [ -d "$GITHUB_WORKSPACE/targets/$TARGET/files" ]; then
             mkdir -p files
             cp -a "$GITHUB_WORKSPACE/targets/$TARGET/files/." files/
           fi
 
-          # 2) Feeds (update first; install after your DIY scripts so newly added packages get installed)
+          # Feeds first
           ./scripts/feeds update -a
 
-          # 3) Config
+          # Config
           cp "$GITHUB_WORKSPACE/targets/$TARGET/.config" .config
 
-          # 4) Your scripts (may add/modify feeds/packages; e.g. golang version bump)
+          # DIY scripts
           if [ -f "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" ]; then
             bash "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" || true
           fi
@@ -169,7 +176,7 @@ jobs:
           fi
           bash "$GITHUB_WORKSPACE/targets/$TARGET/diy-part.sh" || true
 
-          # 5) Install feeds (force) after DIY
+          # Install feeds after DIY
           ./scripts/feeds install -a -f
 
       - name: Generate .config
@@ -178,23 +185,20 @@ jobs:
           cd openwrt
           make defconfig
           ./scripts/diffconfig.sh > "$GITHUB_WORKSPACE/diffconfig.txt" || true
-          echo "TARGET_PROFILE=x86_64" >> $GITHUB_ENV
 
       - name: Download dl
-        id: download
         run: |
           set -euo pipefail
           cd openwrt
           make download -j8
-          find dl -size -1024c -exec ls -l {} \; || true
           find dl -size -1024c -exec rm -f {} \; || true
 
-      - name: Save cache (dl) [DISABLED]
-        if: ${{ false }}
+      - name: Save cache (dl)
+        if: env.USE_CACHEWRTBUILD == 'true'
         uses: actions/cache/save@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
+          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/build.yml', 'scripts/**') }}
 
       - name: Warmup mode stop
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'warmup'
@@ -210,12 +214,12 @@ jobs:
           (make -j"$(nproc)" 2>&1 | tee build.log) || (make -j1 V=sc 2>&1 | tee -a build.log)
           echo "COMPILESTATUS=success" >> $GITHUB_ENV
 
-      - name: Save cache (ccache) [DISABLED]
-        if: ${{ false }}
+      - name: Save cache (ccache)
+        if: env.USE_CACHEWRTBUILD == 'true'
         uses: actions/cache/save@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
+          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/build.yml', 'scripts/**') }}
 
       - name: Upload build log
         if: always()
@@ -225,7 +229,6 @@ jobs:
           path: openwrt/build.log
 
       - name: Organize firmware
-        id: organize
         if: env.COMPILESTATUS == 'success' && env.UPLOAD_FIRMWARE == 'true'
         run: |
           set -euo pipefail
@@ -234,66 +237,34 @@ jobs:
           find . -maxdepth 1 -type f -name "*buildinfo*" -delete || true
           find . -maxdepth 1 -type f -name "*sha256sums*" -delete || true
           find . -maxdepth 1 -type f -name "*manifest*" -delete || true
-          find . -maxdepth 1 -type f -name "*vmlinuz*" -delete || true
-          find . -maxdepth 1 -type f -name "*Image*" -delete || true
-          find . -maxdepth 1 -type f -name "*rootfs*" -delete || true
-          find . -maxdepth 1 -type f -name "*Legacy*" -delete || true
-          find . -maxdepth 1 -type f -name "*kernel*" -delete || true
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-          echo "ORGANIZERSTATUS=success" >> $GITHUB_ENV
 
       - name: Upload firmware artifact
-        if: env.ORGANIZERSTATUS == 'success'
+        if: env.COMPILESTATUS == 'success' && env.UPLOAD_FIRMWARE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Immortalwrt-x86_64-firmware_${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
 
       - name: Release
-        if: env.ORGANIZERSTATUS == 'success' && env.UPLOAD_RELEASE == 'true'
+        if: env.COMPILESTATUS == 'success' && env.UPLOAD_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.FILE_DATE }}
           name: Immortalwrt x86_64 ${{ env.FILE_DATE }}
           files: ${{ env.FIRMWARE }}/*
 
-      - name: Notify (Telegram / PushPlus)
-        if: env.ORGANIZERSTATUS == 'success'
+      - name: Notify (Telegram)
+        if: env.COMPILESTATUS == 'success'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PUSH_PLUS_TOKEN: ${{ secrets.PUSH_PLUS_TOKEN }}
         run: |
           set -euo pipefail
-          MSG="✅ ImmortalWrt x86_64 build success\nRepo: $GITHUB_REPOSITORY\nRun: #${{ github.run_number }}\nBranch: $REPO_BRANCH\nTime: $FILE_DATE"
-
-          if [ "${SERVERCHAN_SCKEY}" = "TELE" ] && [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_CHAT_ID}" ]; then
-            curl -fsSL --data chat_id="${TELEGRAM_CHAT_ID}" \
-              --data "text=$MSG" \
-              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" || true
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+            MSG="ImmortalWrt x86_64 build success: ${FILE_DATE} (source ${OPENWRT_COMMIT})"
+            curl -fsSL "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${TELEGRAM_CHAT_ID}" -d text="${MSG}" >/dev/null
+          else
+            echo "Telegram secrets not set, skip."
           fi
-
-          if [ "${SERVERCHAN_SCKEY}" = "PUSH" ] && [ -n "${PUSH_PLUS_TOKEN}" ]; then
-            curl -fsSL --data token="${PUSH_PLUS_TOKEN}" \
-              --data title="[ImmortalWrt x86_64] build success" \
-              --data "content=$MSG" \
-              "http://www.pushplus.plus/send" || true
-          fi
-
-      - name: Delete workflow runs
-        if: always()
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          retain_days: 1
-          keep_minimum_runs: 1
-
-      - name: Remove old releases
-        if: always() && env.UPLOAD_RELEASE == 'true'
-        uses: dev-drprasad/delete-older-releases@v0.3.4
-        with:
-          keep_latest: 6
-          delete_tags: true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
