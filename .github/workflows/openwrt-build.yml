@@ -112,27 +112,33 @@ jobs:
         run: |
           set -euo pipefail
           git clone -b "$REPO_BRANCH" --single-branch --filter=blob:none "$REPO_URL" "$OPENWRT_DIR"
+
+          # Pin to a known-good commit to avoid upstream drift breaking builds
+          cd "$OPENWRT_DIR"
+          git checkout d9bda28
+          echo "OPENWRT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "Using OpenWrt commit: $(git log -1 --oneline)"
+
           ln -sf "${BUILD_DIR}/${OPENWRT_DIR}" "$GITHUB_WORKSPACE/openwrt"
 
-      # NOTE: 临时关闭缓存（方案 A：排查缓存/残留导致的编译问题）
-      # 验证无误后可恢复这些步骤。
-      - name: Restore cache (dl) [DISABLED]
-        if: ${{ false }}
+      # Cache restored (re-enabled). Bump CACHE_VER when you need to invalidate old caches.
+      - name: Restore cache (dl)
         uses: actions/cache/restore@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
+          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-v2-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
           restore-keys: |
+            ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-v2-
             ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-
             ${{ runner.os }}-openwrt-dl-
 
-      - name: Restore cache (ccache) [DISABLED]
-        if: ${{ false }}
+      - name: Restore cache (ccache)
         uses: actions/cache/restore@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
+          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-v2-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
           restore-keys: |
+            ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-v2-
             ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-
             ${{ runner.os }}-openwrt-ccache-
 
@@ -189,12 +195,12 @@ jobs:
           find dl -size -1024c -exec ls -l {} \; || true
           find dl -size -1024c -exec rm -f {} \; || true
 
-      - name: Save cache (dl) [DISABLED]
-        if: ${{ false }}
+      - name: Save cache (dl)
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
+          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-v2-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
 
       - name: Warmup mode stop
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'warmup'
@@ -210,12 +216,12 @@ jobs:
           (make -j"$(nproc)" 2>&1 | tee build.log) || (make -j1 V=sc 2>&1 | tee -a build.log)
           echo "COMPILESTATUS=success" >> $GITHUB_ENV
 
-      - name: Save cache (ccache) [DISABLED]
-        if: ${{ false }}
+      - name: Save cache (ccache)
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
+          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-v2-${{ hashFiles('targets/Immortalwrt/settings.ini', 'targets/Immortalwrt/.config', 'targets/Immortalwrt/diy-part.sh', '.github/workflows/openwrt-build.yml', 'scripts/**') }}
 
       - name: Upload build log
         if: always()
