@@ -150,14 +150,13 @@ jobs:
             cp -a "$GITHUB_WORKSPACE/targets/$TARGET/files/." files/
           fi
 
-          # 2) Feeds
+          # 2) Feeds (update first; install after your DIY scripts so newly added packages get installed)
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
 
           # 3) Config
           cp "$GITHUB_WORKSPACE/targets/$TARGET/.config" .config
 
-          # 4) Your scripts
+          # 4) Your scripts (may add/modify feeds/packages; e.g. golang version bump)
           if [ -f "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" ]; then
             bash "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" || true
           fi
@@ -165,6 +164,9 @@ jobs:
             bash "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/preset-clash-core.sh" || true
           fi
           bash "$GITHUB_WORKSPACE/targets/$TARGET/diy-part.sh" || true
+
+          # 5) Install feeds (force) after DIY
+          ./scripts/feeds install -a -f
 
       - name: Generate .config
         run: |
