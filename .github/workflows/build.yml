@@ -214,6 +214,21 @@ jobs:
           (make -j"$(nproc)" 2>&1 | tee build.log) || (make -j1 V=sc 2>&1 | tee -a build.log)
           echo "COMPILESTATUS=success" >> $GITHUB_ENV
 
+      # Debug helpers: make root-cause visible in logs even when runner is inaccessible
+      - name: Debug libffi (best-effort)
+        if: always()
+        run: |
+          set -euxo pipefail
+          cd openwrt
+          make -j1 V=sc package/feeds/packages/libffi/compile || true
+
+      - name: Debug docker (best-effort)
+        if: always()
+        run: |
+          set -euxo pipefail
+          cd openwrt
+          make -j1 V=sc package/feeds/packages/docker/compile || true
+
       - name: Save cache (ccache)
         if: env.USE_CACHEWRTBUILD == 'true'
         uses: actions/cache/save@v4
