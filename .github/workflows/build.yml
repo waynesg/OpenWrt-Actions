@@ -204,13 +204,24 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'warmup'
         run: echo "Warmup done (dl cached)." && exit 0
 
-      - name: "Preflight: build troublemakers (libffi/docker)"
+      - name: "Preflight: toolchain + troublemakers (libffi/docker)"
         id: preflight
         continue-on-error: true
         run: |
           set -euo pipefail
           cd openwrt
           : > build.log
+
+          echo "===== PRECHECK toolchain/install =====" | tee -a build.log
+          # If staging_dir/toolchain-* is half-baked (cache/resume), many packages will fail with confusing errors.
+          rm -rf staging_dir/toolchain-* staging_dir/target-*_musl/hostpkg 2>/dev/null || true
+          # Build and install the full toolchain first.
+          if make -j1 V=sc toolchain/install 2>&1 | tee -a build.log; then
+            echo "toolchain/install ok" | tee -a build.log
+          else
+            echo "toolchain/install failed (stop early)" | tee -a build.log
+            exit 1
+          fi
 
           echo "===== PRECHECK libffi =====" | tee -a build.log
           (make -j1 V=sc package/feeds/packages/libffi/compile 2>&1 | tee -a build.log) || true
