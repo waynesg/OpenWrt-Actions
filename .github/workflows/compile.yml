@@ -132,6 +132,12 @@ jobs:
           fi
 
           ./scripts/feeds update -a
+
+          # Fix libffi install-dev: fficonfig.h is generated under the build variant subdir (e.g. PKG_BUILD_DIR/Immortalwrt/...).
+          if [ -f feeds/packages/libs/libffi/Makefile ]; then
+            sed -i 's#\$(PKG_BUILD_DIR)/\$(GNU_TARGET_NAME)\*/fficonfig\.h#\$(PKG_BUILD_DIR)/*/\$(GNU_TARGET_NAME)*/fficonfig.h \$(PKG_BUILD_DIR)/\$(GNU_TARGET_NAME)*/fficonfig.h#g' feeds/packages/libs/libffi/Makefile || true
+          fi
+
           cp "$GITHUB_WORKSPACE/targets/$TARGET/.config" .config
 
           if [ -f "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" ]; then
