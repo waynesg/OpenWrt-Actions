@@ -1,0 +1,195 @@
+name: Compile (ImmortalWrt x86_64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'ssh: open debugger-action shell (menuconfig etc)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false','ssh']
+      mode:
+        description: 'warmup: only download dl; build: full compile'
+        required: true
+        default: 'build'
+        type: choice
+        options: [build, warmup]
+      repo_branch:
+        description: 'Override source branch (empty = use targets/Immortalwrt/settings.ini)'
+        required: false
+        default: ''
+      repo_commit:
+        description: 'Optional: pin source to a specific commit (short/long SHA). Empty = do not pin.'
+        required: false
+        default: ''
+  push:
+    branches: [ main ]
+    paths:
+      - 'targets/Immortalwrt/relevance/start'
+
+env:
+  TZ: Asia/Shanghai
+  BUILD_DIR: /builder
+  OPENWRT_DIR: openwrt
+  TARGET: Immortalwrt
+  CACHE_VER: v4
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    if: ${{ github.event.repository.owner.id == github.event.sender.id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init build environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo timedatectl set-timezone "$TZ"
+          bash scripts/ubuntu.sh
+          sudo mkdir -p "${BUILD_DIR}"
+          sudo chown "$USER:$(id -gn)" "${BUILD_DIR}"
+
+      - name: Load target settings
+        run: |
+          set -euo pipefail
+          source "targets/${TARGET}/settings.ini"
+
+          INPUT_BRANCH="${{ github.event.inputs.repo_branch }}"
+          if [ -n "${INPUT_BRANCH:-}" ]; then
+            REPO_BRANCH="$INPUT_BRANCH"
+          fi
+
+          INPUT_COMMIT="${{ github.event.inputs.repo_commit }}"
+          if [ -n "${INPUT_COMMIT:-}" ]; then
+            echo "REPO_COMMIT=$INPUT_COMMIT" >> $GITHUB_ENV
+          fi
+
+          echo "REPO_URL=$REPO_URL" >> $GITHUB_ENV
+          echo "REPO_BRANCH=$REPO_BRANCH" >> $GITHUB_ENV
+          echo "UPLOAD_RELEASE=$UPLOAD_RELEASE" >> $GITHUB_ENV
+          echo "UPLOAD_FIRMWARE=$UPLOAD_FIRMWARE" >> $GITHUB_ENV
+          echo "UPLOAD_CONFIG=$UPLOAD_CONFIG" >> $GITHUB_ENV
+          echo "UPLOAD_BIN_DIR=$UPLOAD_BIN_DIR" >> $GITHUB_ENV
+          echo "USE_CACHEWRTBUILD=$USE_CACHEWRTBUILD" >> $GITHUB_ENV
+
+      - name: Clone source code
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          set -euo pipefail
+          git clone -b "$REPO_BRANCH" --single-branch --filter=blob:none "$REPO_URL" "$OPENWRT_DIR"
+          cd "$OPENWRT_DIR"
+          if [ -n "${REPO_COMMIT:-}" ]; then
+            git fetch --depth=1 origin "$REPO_COMMIT"
+            git checkout "$REPO_COMMIT"
+          fi
+          echo "OPENWRT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "Using source: $(git log -1 --oneline)"
+          ln -sf "${BUILD_DIR}/${OPENWRT_DIR}" "$GITHUB_WORKSPACE/openwrt"
+
+      - name: Restore cache (dl)
+        if: env.USE_CACHEWRTBUILD == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-${{ hashFiles('targets/Immortalwrt/**', '.github/workflows/compile.yml', 'scripts/**') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-
+            ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ env.CACHE_VER }}-
+            ${{ runner.os }}-openwrt-dl-
+
+      - name: Restore cache (ccache)
+        if: env.USE_CACHEWRTBUILD == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt/.ccache
+          key: ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-${{ hashFiles('targets/Immortalwrt/**', '.github/workflows/compile.yml', 'scripts/**') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-
+            ${{ runner.os }}-openwrt-ccache-${{ github.ref_name }}-${{ env.CACHE_VER }}-
+            ${{ runner.os }}-openwrt-ccache-
+
+      - name: Setup ccache
+        if: env.USE_CACHEWRTBUILD == 'true'
+        run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/openwrt/.ccache" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=5G" >> $GITHUB_ENV
+          ccache -M 5G || true
+          ccache -s || true
+
+      - name: Apply overlay + feeds + config + DIY
+        run: |
+          set -euo pipefail
+          cd openwrt
+
+          if [ -d "$GITHUB_WORKSPACE/targets/$TARGET/files" ]; then
+            mkdir -p files
+            cp -a "$GITHUB_WORKSPACE/targets/$TARGET/files/." files/
+          fi
+
+          ./scripts/feeds update -a
+          cp "$GITHUB_WORKSPACE/targets/$TARGET/.config" .config
+
+          if [ -f "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" ]; then
+            bash "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" || true
+          fi
+          if [ -f "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/preset-clash-core.sh" ]; then
+            bash "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/preset-clash-core.sh" || true
+          fi
+          bash "$GITHUB_WORKSPACE/targets/$TARGET/diy-part.sh" || true
+
+          ./scripts/feeds install -a -f
+
+          make defconfig
+          ./scripts/diffconfig.sh > "$GITHUB_WORKSPACE/diffconfig.txt" || true
+
+      - name: SSH (debugger-action)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.ssh == 'ssh'
+        uses: danshui-git/debugger-action@main
+        env:
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+
+      - name: Download dl
+        run: |
+          set -euo pipefail
+          cd openwrt
+          make download -j8
+          find dl -size -1024c -exec rm -f {} \; || true
+
+      - name: Save cache (dl)
+        if: env.USE_CACHEWRTBUILD == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-openwrt-dl-${{ github.ref_name }}-${{ env.CACHE_VER }}-${{ env.OPENWRT_COMMIT }}-${{ hashFiles('targets/Immortalwrt/**', '.github/workflows/compile.yml', 'scripts/**') }}
+
+      - name: Warmup mode stop
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'warmup'
+        run: echo "Warmup done." && exit 0
+
+      - name: Compile firmware
+        continue-on-error: true
+        timeout-minutes: 360
+        run: |
+          set -euo pipefail
+          cd openwrt
+          (make -j"$(nproc)" 2>&1 | tee build.log) || (make -j1 V=sc 2>&1 | tee -a build.log)
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log_${{ env.TARGET }}_${{ env.OPENWRT_COMMIT }}
+          path: openwrt/build.log
+
+      - name: Upload firmware artifact
+        if: env.UPLOAD_FIRMWARE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware_${{ env.TARGET }}_${{ env.OPENWRT_COMMIT }}
+          path: openwrt/bin/targets
