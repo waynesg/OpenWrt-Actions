@@ -178,7 +178,20 @@ jobs:
         run: |
           set -euo pipefail
           cd openwrt
-          (make -j"$(nproc)" 2>&1 | tee build.log) || (make -j1 V=sc 2>&1 | tee -a build.log)
+
+          # Same pattern as your old repo: fast build first, then fall back to verbose,
+          # and additionally force a verbose rebuild of libffi to surface the real error.
+          if make -j"$(nproc)" 2>&1 | tee build.log; then
+            exit 0
+          fi
+
+          echo "===== FALLBACK: make -j1 V=sc =====" | tee -a build.log
+          make -j1 V=sc 2>&1 | tee -a build.log || true
+
+          echo "===== FALLBACK: libffi clean+compile (V=sc) =====" | tee -a build.log
+          make -j1 V=sc package/feeds/packages/libffi/{clean,compile} 2>&1 | tee -a build.log || true
+
+          exit 1
 
       - name: Upload build log
         if: always()
