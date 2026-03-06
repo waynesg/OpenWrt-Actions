@@ -257,6 +257,8 @@ jobs:
         if: always()
         run: |
           set -euxo pipefail
+          # If the job was cancelled before cloning/openwrt was created, don't fail this step.
+          [ -d openwrt ] || exit 0
           cd openwrt
           for f in $(find build_dir -maxdepth 6 -type f -name config.log | grep -iE "libffi" || true); do
             echo "===== $f (tail) =====" | tee -a build.log
