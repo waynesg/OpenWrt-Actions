@@ -83,7 +83,6 @@ git clone --depth=1 -b master https://github.com/tty228/luci-app-wechatpush pack
 # wrtbwmon
 # luci-app-wechatpush 依赖 wrtbwmon；确保把 wrtbwmon（以及可选的 luci-app-wrtbwmon）拉进来。
 clone_or_update_git_repo https://github.com/kiddin9/op-packages package/waynesg/ "" wrtbwmon
-clone_or_update_git_repo https://github.com/kiddin9/op-packages package/waynesg/ "" luci-app-wrtbwmon
 #pushbot
 #git clone --depth=1 https://github.com/zzsj0928/luci-app-pushbot package/waynesg/luci-app-pushbot
 #onliner

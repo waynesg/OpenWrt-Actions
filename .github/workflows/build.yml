@@ -164,10 +164,11 @@ jobs:
           # Feeds first
           ./scripts/feeds update -a
 
-          # Fix libffi install-dev: fficonfig.h is generated under the build variant subdir (e.g. PKG_BUILD_DIR/Immortalwrt/...).
-          # ImmortalWrt packages Makefile uses $(PKG_BUILD_DIR)/$(GNU_TARGET_NAME)*/fficonfig.h which can miss that path.
+          # Fix libffi install-dev: fficonfig.h location differs across build variants.
+          # Robust fix: patch Makefile to locate fficonfig.h via find() at install time.
           if [ -f feeds/packages/libs/libffi/Makefile ]; then
-            sed -i 's#\$(PKG_BUILD_DIR)/\$(GNU_TARGET_NAME)\*/fficonfig\.h#\$(PKG_BUILD_DIR)/*/\$(GNU_TARGET_NAME)*/fficonfig.h \$(PKG_BUILD_DIR)/\$(GNU_TARGET_NAME)*/fficonfig.h \$(PKG_BUILD_DIR)/*/fficonfig.h#g' feeds/packages/libs/libffi/Makefile || true
+            mkdir -p feeds/packages/libs/libffi/patches
+            python3 -c 'import pathlib; p=pathlib.Path("feeds/packages/libs/libffi/patches/999-fix-fficonfig-find.patch"); p.write_text("--- a/Makefile\n+++ b/Makefile\n@@ -60,9 +60,16 @@\n\t$(CP) \\\n\t\t$(PKG_INSTALL_DIR)/usr/include/*.h \\\n\t\t$(1)/usr/include/\n-\t$(CP) \\\n-\t\t$(PKG_BUILD_DIR)/$(GNU_TARGET_NAME)*/fficonfig.h \\\n-\t\t$(1)/usr/include/\n+\t@set -e; \\\n+\tFFI_CFG=$$(find \"$(PKG_BUILD_DIR)\" -name fficonfig.h -type f | head -n 1); \\\n+\tif [ -z \"$$FFI_CFG\" ]; then \\\n+\t\techo \"ERROR: fficonfig.h not found under $(PKG_BUILD_DIR)\" >&2; \\\n+\t\texit 1; \\\n+\tfi; \\\n+\t$(CP) \"$$FFI_CFG\" \"$(1)/usr/include/\"\n endef\n"); print("wrote",p)'
           fi
 
           # Config
