@@ -33,7 +33,12 @@ clone_or_update_git_repo() {
   fi
 
   if [ -n "$subdirectory" ]; then
-    cp -a $target_directory/$subdirectory $source_target_directory
+    if [ ! -e "$target_directory/$subdirectory" ]; then
+      echo "ERROR: subdirectory '$subdirectory' not found in repo $git_url (at $target_directory)" >&2
+      return 1
+    fi
+    mkdir -p "$source_target_directory"
+    cp -a "$target_directory/$subdirectory" "$source_target_directory/"
   fi
 }
 
@@ -75,7 +80,10 @@ git clone --depth=1 https://github.com/destan19/OpenAppFilter package/waynesg/lu
 #clone_or_update_git_repo https://github.com/kiddin9/openwrt-packages package/waynesg/luci-app-control-weburl "" luci-app-control-weburl
 #serverchan
 git clone --depth=1 -b master https://github.com/tty228/luci-app-wechatpush package/waynesg/luci-app-wechatpush
-clone_or_update_git_repo https://github.com/kiddin9/kwrt-packages package/waynesg/ "" wrtbwmon
+# wrtbwmon
+# luci-app-wechatpush 依赖 wrtbwmon；确保把 wrtbwmon（以及可选的 luci-app-wrtbwmon）拉进来。
+clone_or_update_git_repo https://github.com/kiddin9/openwrt-packages package/waynesg/ "" wrtbwmon
+clone_or_update_git_repo https://github.com/kiddin9/openwrt-packages package/waynesg/ "" luci-app-wrtbwmon
 #pushbot
 #git clone --depth=1 https://github.com/zzsj0928/luci-app-pushbot package/waynesg/luci-app-pushbot
 #onliner
