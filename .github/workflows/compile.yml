@@ -134,9 +134,11 @@ jobs:
           ./scripts/feeds update -a
 
           # Fix libffi install-dev: fficonfig.h location differs across build variants.
+          # The original line uses a glob pattern that doesn't work with the actual build directory structure.
+          # Solution: remove the problematic line, fficonfig.h is already copied via the previous $(CP) command for *.h files
           if [ -f feeds/packages/libs/libffi/Makefile ]; then
-            # Use sed to replace the glob pattern with a proper find
-            sed -i 's|\$(PKG_BUILD_DIR)/\$(GNU_TARGET_NAME)\*/fficonfig.h|$(shell find $(PKG_BUILD_DIR) -name fficonfig.h -type f 2>/dev/null | head -n 1)|g' feeds/packages/libs/libffi/Makefile
+            # Comment out the problematic fficonfig.h line - the include/*.h copy is sufficient
+            sed -i 's|^.*fficonfig.h.*|# Disabled: fficonfig.h copied via *.h glob above|' feeds/packages/libs/libffi/Makefile
           fi
 
           cp "$GITHUB_WORKSPACE/targets/$TARGET/.config" .config
