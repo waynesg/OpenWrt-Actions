@@ -133,14 +133,6 @@ jobs:
 
           ./scripts/feeds update -a
 
-          # Fix libffi install-dev: fficonfig.h location differs across build variants.
-          # The original line uses a glob pattern that doesn't work with the actual build directory structure.
-          # Solution: remove the problematic line, fficonfig.h is already copied via the previous $(CP) command for *.h files
-          if [ -f feeds/packages/libs/libffi/Makefile ]; then
-            # Comment out the problematic fficonfig.h line - the include/*.h copy is sufficient
-            sed -i 's|^.*fficonfig.h.*|# Disabled: fficonfig.h copied via *.h glob above|' feeds/packages/libs/libffi/Makefile
-          fi
-
           cp "$GITHUB_WORKSPACE/targets/$TARGET/.config" .config
 
           if [ -f "$GITHUB_WORKSPACE/targets/$TARGET/waynesg/diy-repo-script.sh" ]; then
@@ -182,25 +174,11 @@ jobs:
         run: echo "Warmup done." && exit 0
 
       - name: Compile firmware
-        continue-on-error: true
         timeout-minutes: 360
         run: |
           set -euo pipefail
           cd openwrt
-
-          # Same pattern as your old repo: fast build first, then fall back to verbose,
-          # and additionally force a verbose rebuild of libffi to surface the real error.
-          if make -j"$(nproc)" 2>&1 | tee build.log; then
-            exit 0
-          fi
-
-          echo "===== FALLBACK: make -j1 V=sc =====" | tee -a build.log
-          make -j1 V=sc 2>&1 | tee -a build.log || true
-
-          echo "===== FALLBACK: libffi clean+compile (V=sc) =====" | tee -a build.log
-          make -j1 V=sc package/feeds/packages/libffi/{clean,compile} 2>&1 | tee -a build.log || true
-
-          exit 1
+          make -j"$(nproc)"
 
       - name: Upload build log
         if: always()
